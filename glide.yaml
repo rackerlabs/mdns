@@ -1,3 +1,7 @@
 package: github.com/rackerlabs/mdns
 import:
+- package: github.com/Sirupsen/logrus
+- package: github.com/go-sql-driver/mysql
+- package: github.com/jmoiron/sqlx
 - package: github.com/miekg/dns
+- package: github.com/vharitonsky/iniflags
