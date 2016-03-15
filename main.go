@@ -46,56 +46,79 @@ type RR struct {
 //
 
 func Handle(writer dns.ResponseWriter, request *dns.Msg) {
+	switch request.Opcode {
+	case dns.OpcodeQuery:
+		if request.Question[0].Qtype == dns.TypeAXFR {
+			handle_axfr(request, writer)
+		} else if request.Question[0].Qtype == dns.TypeIXFR {
+			writer.WriteMsg(handle_error(prep_reply(request), writer, "REFUSED"))
+		} else {
+			message := prep_reply(request)
+			message = handle_query(request.Question[0], message, writer)
+			writer.WriteMsg(message)
+		}
+
+	default:
+		log.Info(fmt.Sprintf("ERROR %s : unsupported opcode %d", request.Question[0].Name, request.Opcode))
+		writer.WriteMsg(handle_error(prep_reply(request), writer, "REFUSED"))
+	}
+}
+
+func prep_reply(request *dns.Msg) *dns.Msg {
 	question := request.Question[0]
 
 	message := new(dns.Msg)
 	message.SetReply(request)
 	message.SetRcode(message, dns.RcodeSuccess)
 
-	log.Debug(debug_request(*request, question, writer))
+	log.Debug(debug_request(*request, question))
 
-	switch request.Opcode {
-	case dns.OpcodeQuery:
-		if question.Qtype == dns.TypeAXFR {
-			message = handle_axfr(question, message, writer)
-		} else {
-			message = handle_query(question, message, writer)
-		}
-
-	default:
-		log.Info(fmt.Sprintf("ERROR %s : unsupported opcode %d", question.Name, request.Opcode))
-		message = handle_error(message, writer, "REFUSED")
-	}
-
-	respond(message, question, *request, writer)
-}
-
-func respond(message *dns.Msg, question dns.Question, request dns.Msg, writer dns.ResponseWriter) {
-	// Apparently this dns library takes the question out on
-	// certain RCodes, like REFUSED, which is not right. So we reinsert it.
-	message.Question[0].Name = question.Name
-	message.Question[0].Qtype = question.Qtype
-	message.Question[0].Qclass = question.Qclass
-	message.MsgHdr.Opcode = request.Opcode
+	// Add the question back
+	message.Question[0] = question
 
 	// Send an authoritative answer
 	message.MsgHdr.Authoritative = true
 
-	writer.WriteMsg(message)
+	return message
 }
 
-func handle_axfr(question dns.Question, message *dns.Msg, writer dns.ResponseWriter) *dns.Msg {
-	zonename := question.Name
+func handle_axfr(request *dns.Msg, writer dns.ResponseWriter) *dns.Msg {
+	zonename := request.Question[0].Name
 	log.Debug(fmt.Sprintf("Attempting AXFR for %s", zonename))
-	rrs, err := do_axfr(zonename)
+
+	rrs, err := get_axfr_rrs(zonename)
 	if err != nil {
 		log.Error(fmt.Sprintf("Error with the axfr for %s", zonename))
+		message := prep_reply(request)
 		return handle_error(message, writer, "SERVAIL")
 	}
 
-	message.Answer = append(message.Answer, rrs...)
+	ch := make(chan *dns.Envelope)
+	go func(ch chan *dns.Envelope, request *dns.Msg) error {
+		for envelope := range ch {
+			message := prep_reply(request)
+			message.Answer = append(message.Answer, envelope.RR...)
+			if err := writer.WriteMsg(message); err != nil {
+				log.Error(fmt.Sprintf("Error answering axfr: %s", err))
+				return err
+			}
+		}
+		return nil
+	}(ch, request)
+
+	rrs_sent := 0
+	for rrs_sent < len(rrs) {
+		rrs_to_send := 100
+		if rrs_sent+rrs_to_send > len(rrs) {
+			rrs_to_send = len(rrs) - rrs_sent
+		}
+		ch <- &dns.Envelope{RR: rrs[rrs_sent:(rrs_sent + rrs_to_send)]}
+		rrs_sent += rrs_to_send
+	}
+	close(ch)
+
 	log.Info(fmt.Sprintf("Completed AXFR for %s", zonename))
-	return message
+	return nil
 }
 
 func handle_query(question dns.Question, message *dns.Msg, writer dns.ResponseWriter) *dns.Msg {
@@ -122,6 +145,8 @@ func handle_query(question dns.Question, message *dns.Msg, writer dns.ResponseWr
 }
 
 func handle_error(message *dns.Msg, writer dns.ResponseWriter, op string) *dns.Msg {
+	question := message.Question[0]
+
 	switch op {
 	case "REFUSED":
 		message.SetRcode(message, dns.RcodeRefused)
@@ -131,13 +156,18 @@ func handle_error(message *dns.Msg, writer dns.ResponseWriter, op string) *dns.M
 		message.SetRcode(message, dns.RcodeServerFailure)
 	}
 
+	// Add the question back
+	message.Question[0] = question
+
+	// Send an authoritative answer
+	message.MsgHdr.Authoritative = true
+
 	return message
 }
 
-func debug_request(request dns.Msg, question dns.Question, writer dns.ResponseWriter) string {
-	addr := writer.RemoteAddr().String() // ipaddr string
+func debug_request(request dns.Msg, question dns.Question) string {
 	s := []string{}
-	s = append(s, fmt.Sprintf("Received request from %s ", addr))
+	s = append(s, fmt.Sprintf("Received request "))
 	s = append(s, fmt.Sprintf("for %s ", question.Name))
 	s = append(s, fmt.Sprintf("opcode: %d ", request.Opcode))
 	s = append(s, fmt.Sprintf("rrtype: %d ", question.Qtype))
@@ -167,7 +197,7 @@ func init_db() error {
 	return nil
 }
 
-func do_axfr(zonename string) ([]dns.RR, error) {
+func get_axfr_rrs(zonename string) ([]dns.RR, error) {
 	zone, err := get_zone(zonename)
 	if err != nil {
 		return nil, err
@@ -358,7 +388,7 @@ func main() {
 	version := flag.Bool("version", false, "prints version information")
 	debug = flag.Bool("debug", false, "enables debug mode")
 	bind_address = flag.String("bind_address", "127.0.0.1", "IP to listen on")
-	bind_port = flag.String("bind_port", "5358", "port to listen on")
+	bind_port = flag.String("bind_port", "5354", "port to listen on")
 	db_conn = flag.String("db", "root:password@tcp(127.0.0.1:3306)/designate", "db connection string")
 	flag.Usage = func() {
 		flag.PrintDefaults()
@@ -373,6 +403,7 @@ func main() {
 	}
 
 	// Logging
+	log.SetFormatter(&log.TextFormatter{FullTimestamp: true})
 	if *debug == true {
 		log.SetLevel(log.DebugLevel)
 	} else {
