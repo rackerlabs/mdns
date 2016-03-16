@@ -2,6 +2,7 @@ package main
 
 import (
 	"database/sql"
+	"errors"
 	"flag"
 	"fmt"
 	log "github.com/Sirupsen/logrus"
@@ -45,23 +46,47 @@ type RR struct {
 // DNS Handling
 //
 
-func Handle(writer dns.ResponseWriter, request *dns.Msg) {
+type MdnsHandler struct {
+	// db field
+	// possibly pass the db field into these funcs
+	// Should these be an interface instead?
+	axfr_func  func(dns.ResponseWriter, *dns.Msg) error
+	query_func func(dns.Question, dns.ResponseWriter, *dns.Msg) (*dns.Msg, error)
+	error_func func(*dns.Msg, dns.ResponseWriter, string) *dns.Msg
+}
+
+func (mdns *MdnsHandler) ServeDNS(writer dns.ResponseWriter, request *dns.Msg) {
+	log.Debug(debug_request(*request, request.Question[0]))
+
+	var message *dns.Msg
+	var err error
+
 	switch request.Opcode {
 	case dns.OpcodeQuery:
 		if request.Question[0].Qtype == dns.TypeAXFR {
-			handle_axfr(request, writer)
+			err = mdns.axfr_func(writer, request)
+			if err != nil {
+				log.Error(fmt.Sprintf("Problem with AXFR for %s: %s", request.Question[0].Name, err))
+				message = mdns.error_func(request, writer, "SERVFAIL")
+			} else {
+				return
+			}
 		} else if request.Question[0].Qtype == dns.TypeIXFR {
-			writer.WriteMsg(handle_error(prep_reply(request), writer, "REFUSED"))
+			message = mdns.error_func(request, writer, "REFUSED")
 		} else {
-			message := prep_reply(request)
-			message = handle_query(request.Question[0], message, writer)
-			writer.WriteMsg(message)
+			message = prep_reply(request)
+			message, err = mdns.query_func(request.Question[0], writer, message)
+			if err != nil {
+				message = mdns.error_func(request, writer, err.Error())
+			}
 		}
 
 	default:
 		log.Info(fmt.Sprintf("ERROR %s : unsupported opcode %d", request.Question[0].Name, request.Opcode))
-		writer.WriteMsg(handle_error(prep_reply(request), writer, "REFUSED"))
+		message = mdns.error_func(request, writer, "REFUSED")
 	}
+
+	writer.WriteMsg(message)
 }
 
 func prep_reply(request *dns.Msg) *dns.Msg {
@@ -70,8 +95,6 @@ func prep_reply(request *dns.Msg) *dns.Msg {
 	message := new(dns.Msg)
 	message.SetReply(request)
 	message.SetRcode(message, dns.RcodeSuccess)
-
-	log.Debug(debug_request(*request, question))
 
 	// Add the question back
 	message.Question[0] = question
@@ -82,15 +105,45 @@ func prep_reply(request *dns.Msg) *dns.Msg {
 	return message
 }
 
-func handle_axfr(request *dns.Msg, writer dns.ResponseWriter) *dns.Msg {
+func handle_error(message *dns.Msg, writer dns.ResponseWriter, op string) *dns.Msg {
+	question := message.Question[0]
+	message = prep_reply(message)
+
+	switch op {
+	case "REFUSED":
+		message.SetRcode(message, dns.RcodeRefused)
+	case "SERVFAIL":
+		message.SetRcode(message, dns.RcodeServerFailure)
+	default:
+		message.SetRcode(message, dns.RcodeServerFailure)
+	}
+
+	// Add the question back
+	message.Question[0] = question
+
+	// Send an authoritative answer
+	message.MsgHdr.Authoritative = true
+
+	return message
+}
+
+func debug_request(request dns.Msg, question dns.Question) string {
+	s := []string{}
+	s = append(s, fmt.Sprintf("Received request "))
+	s = append(s, fmt.Sprintf("for %s ", question.Name))
+	s = append(s, fmt.Sprintf("opcode: %d ", request.Opcode))
+	s = append(s, fmt.Sprintf("rrtype: %d ", question.Qtype))
+	s = append(s, fmt.Sprintf("rrclass: %d ", question.Qclass))
+	return strings.Join(s, "")
+}
+
+func handle_axfr(writer dns.ResponseWriter, request *dns.Msg) error {
 	zonename := request.Question[0].Name
 	log.Debug(fmt.Sprintf("Attempting AXFR for %s", zonename))
 
 	rrs, err := get_axfr_rrs(zonename)
 	if err != nil {
-		log.Error(fmt.Sprintf("Error with the axfr for %s", zonename))
-		message := prep_reply(request)
-		return handle_error(message, writer, "SERVAIL")
+		return err
 	}
 
 	ch := make(chan *dns.Envelope)
@@ -121,7 +174,7 @@ func handle_axfr(request *dns.Msg, writer dns.ResponseWriter) *dns.Msg {
 	return nil
 }
 
-func handle_query(question dns.Question, message *dns.Msg, writer dns.ResponseWriter) *dns.Msg {
+func handle_query(question dns.Question, writer dns.ResponseWriter, message *dns.Msg) (*dns.Msg, error) {
 	name := question.Name
 	rrtypeint := question.Qtype
 
@@ -132,47 +185,16 @@ func handle_query(question dns.Question, message *dns.Msg, writer dns.ResponseWr
 	rrs, err := get_rrs(name, rrtype)
 	if err != nil {
 		log.Error(fmt.Sprintf("There was a problem querying %s for %s", rrtype, name))
-		return handle_error(message, writer, "SERVAIL")
+		return message, errors.New("SERVFAIL")
 	}
 
 	log.Info(fmt.Sprintf("Completed %s query for %s", rrtype, name))
 	if len(rrs) == 0 {
-		return handle_error(message, writer, "REFUSED")
+		return message, errors.New("REFUSED")
 	}
 
 	message.Answer = append(message.Answer, rrs...)
-	return message
-}
-
-func handle_error(message *dns.Msg, writer dns.ResponseWriter, op string) *dns.Msg {
-	question := message.Question[0]
-
-	switch op {
-	case "REFUSED":
-		message.SetRcode(message, dns.RcodeRefused)
-	case "SERVFAIL":
-		message.SetRcode(message, dns.RcodeServerFailure)
-	default:
-		message.SetRcode(message, dns.RcodeServerFailure)
-	}
-
-	// Add the question back
-	message.Question[0] = question
-
-	// Send an authoritative answer
-	message.MsgHdr.Authoritative = true
-
-	return message
-}
-
-func debug_request(request dns.Msg, question dns.Question) string {
-	s := []string{}
-	s = append(s, fmt.Sprintf("Received request "))
-	s = append(s, fmt.Sprintf("for %s ", question.Name))
-	s = append(s, fmt.Sprintf("opcode: %d ", request.Opcode))
-	s = append(s, fmt.Sprintf("rrtype: %d ", question.Qtype))
-	s = append(s, fmt.Sprintf("rrclass: %d ", question.Qclass))
-	return strings.Join(s, "")
+	return message, nil
 }
 
 //
@@ -219,7 +241,6 @@ func get_zone(zonename string) (Zone, error) {
 	       AND zones.deleted = '0'`, zonename)
 	err := row.StructScan(&zone)
 	if err != nil {
-		log.Error("Problem fetching zone from database : ", err)
 		return zone, err
 	}
 
@@ -354,9 +375,13 @@ func build_dns_rrs(rrs []RR, zone Zone, axfr bool) ([]dns.RR, error) {
 
 func serve(net, ip, port string) {
 	bind := fmt.Sprintf("%s:%s", ip, port)
-	server := &dns.Server{Addr: bind, Net: net}
+	handler := &MdnsHandler{
+		axfr_func:  handle_axfr,
+		query_func: handle_query,
+		error_func: handle_error,
+	}
+	server := &dns.Server{Addr: bind, Net: net, Handler: handler}
 
-	dns.HandleFunc(".", Handle)
 	log.Info(fmt.Sprintf("mdns starting %s listener on %s", net, bind))
 
 	err := server.ListenAndServe()
