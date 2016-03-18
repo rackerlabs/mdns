@@ -18,18 +18,18 @@ import (
 var Conf Config
 
 type Config struct {
-	Version      bool
-	Debug        bool
-	Bind_address string
-	Bind_port    string
-	Db_type      string
-	Db_conn      string
+	Version     bool
+	Debug       bool
+	BindAddress string
+	BindPort    string
+	DbType      string
+	DbConn      string
 }
 
-func Init_config() Config {
+func InitConfig() Config {
 	// Provide a '--version' flag
 	version := flag.Bool("version", false, "prints version information")
-	debug := flag.Bool("debug", false, "enables debug mode")
+	debug := flag.Bool("debug", true, "enables debug mode")
 	bind_address := flag.String("bind_address", "127.0.0.1", "IP to listen on")
 	bind_port := flag.String("bind_port", "5354", "port to listen on")
 	db_type := flag.String("db_type", "mysql", "type of db connection (mysql, postgres, sqlite3)")
@@ -40,17 +40,21 @@ func Init_config() Config {
 	// You can specify an .ini file with the -config
 	iniflags.Parse()
 	Conf = Config{
-		Version:      *version,
-		Debug:        *debug,
-		Bind_address: *bind_address,
-		Bind_port:    *bind_port,
-		Db_type:      *db_type,
-		Db_conn:      *db_conn,
+		Version:     *version,
+		Debug:       *debug,
+		BindAddress: *bind_address,
+		BindPort:    *bind_port,
+		DbType:      *db_type,
+		DbConn:      *db_conn,
 	}
 	return Conf
 }
 
-func Init_logging() {
+//
+// Logging
+//
+
+func InitLogging() {
 	log.SetFormatter(&log.TextFormatter{FullTimestamp: true})
 	if Conf.Debug == true {
 		log.SetLevel(log.DebugLevel)
@@ -67,27 +71,27 @@ func Serve(net, ip, port string, handler MdnsHandler) {
 	bind := fmt.Sprintf("%s:%s", ip, port)
 	server := &dns.Server{Addr: bind, Net: net, Handler: &handler}
 
-	log.Info(fmt.Sprintf("mdns starting %s listener on %s", net, bind))
+	log.Info(fmt.Sprintf("starting mdns %s listener on %s", net, bind))
 
 	err := server.ListenAndServe()
 	if err != nil {
-		panic(fmt.Sprintf("Failed to set up the "+net+"server %s", err.Error()))
+		panic(fmt.Sprintf("Failed to set up the %s server: %s", net, err.Error()))
 	}
 }
 
 func Listen() {
-	siq_quit := make(chan os.Signal)
-	signal.Notify(siq_quit, syscall.SIGINT, syscall.SIGTERM)
-	sig_stat := make(chan os.Signal)
-	signal.Notify(sig_stat, syscall.SIGUSR1)
+	SigQuit := make(chan os.Signal)
+	signal.Notify(SigQuit, syscall.SIGINT, syscall.SIGTERM)
+	SigStat := make(chan os.Signal)
+	signal.Notify(SigStat, syscall.SIGUSR1)
 
 forever:
 	for {
 		select {
-		case s := <-siq_quit:
+		case s := <-SigQuit:
 			log.Info(fmt.Sprintf("Signal (%d) received, stopping", s))
 			break forever
-		case _ = <-sig_stat:
+		case _ = <-SigStat:
 			log.Info(fmt.Sprintf("Goroutines: %d", runtime.NumGoroutine()))
 		}
 	}

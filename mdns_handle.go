@@ -13,23 +13,23 @@ import (
 //
 
 type MdnsHandler struct {
-	storage    Storage
-	axfr_func  func(dns.ResponseWriter, *dns.Msg, Storage) error
-	query_func func(dns.Question, dns.ResponseWriter, *dns.Msg, Storage) (*dns.Msg, error)
-	error_func func(*dns.Msg, dns.ResponseWriter, string) *dns.Msg
+	storage   Storage
+	axfrFunc  func(dns.ResponseWriter, *dns.Msg, Storage) error
+	queryFunc func(dns.Question, *dns.Msg, Storage) (*dns.Msg, error)
+	errorFunc func(*dns.Msg, string) *dns.Msg
 }
 
 func NewDefaultMdnsHandler(storage Storage) MdnsHandler {
 	return MdnsHandler{
-		axfr_func:  handle_axfr,
-		query_func: handle_query,
-		error_func: handle_error,
-		storage:    storage,
+		axfrFunc:  handleAXFR,
+		queryFunc: handleQuery,
+		errorFunc: handleError,
+		storage:   storage,
 	}
 }
 
 func (mdns *MdnsHandler) ServeDNS(writer dns.ResponseWriter, request *dns.Msg) {
-	log.Debug(debug_request(*request, request.Question[0]))
+	log.Debug(debugRequest(*request, request.Question[0]))
 
 	var message *dns.Msg
 	var err error
@@ -37,32 +37,32 @@ func (mdns *MdnsHandler) ServeDNS(writer dns.ResponseWriter, request *dns.Msg) {
 	switch request.Opcode {
 	case dns.OpcodeQuery:
 		if request.Question[0].Qtype == dns.TypeAXFR {
-			err = mdns.axfr_func(writer, request, mdns.storage)
+			err = mdns.axfrFunc(writer, request, mdns.storage)
 			if err != nil {
 				log.Error(fmt.Sprintf("Problem with AXFR for %s: %s", request.Question[0].Name, err))
-				message = mdns.error_func(request, writer, "SERVFAIL")
+				message = mdns.errorFunc(request, "SERVFAIL")
 			} else {
 				return
 			}
 		} else if request.Question[0].Qtype == dns.TypeIXFR {
-			message = mdns.error_func(request, writer, "REFUSED")
+			message = mdns.errorFunc(request, "REFUSED")
 		} else {
-			message = prep_reply(request)
-			message, err = mdns.query_func(request.Question[0], writer, message, mdns.storage)
+			message = PrepReply(request)
+			message, err = mdns.queryFunc(request.Question[0], message, mdns.storage)
 			if err != nil {
-				message = mdns.error_func(request, writer, err.Error())
+				message = mdns.errorFunc(request, err.Error())
 			}
 		}
 
 	default:
 		log.Info(fmt.Sprintf("ERROR %s : unsupported opcode %d", request.Question[0].Name, request.Opcode))
-		message = mdns.error_func(request, writer, "REFUSED")
+		message = mdns.errorFunc(request, "REFUSED")
 	}
 
 	writer.WriteMsg(message)
 }
 
-func prep_reply(request *dns.Msg) *dns.Msg {
+func PrepReply(request *dns.Msg) *dns.Msg {
 	question := request.Question[0]
 
 	message := new(dns.Msg)
@@ -78,9 +78,9 @@ func prep_reply(request *dns.Msg) *dns.Msg {
 	return message
 }
 
-func handle_error(message *dns.Msg, writer dns.ResponseWriter, op string) *dns.Msg {
+func handleError(message *dns.Msg, op string) *dns.Msg {
 	question := message.Question[0]
-	message = prep_reply(message)
+	message = PrepReply(message)
 
 	switch op {
 	case "REFUSED":
@@ -100,21 +100,21 @@ func handle_error(message *dns.Msg, writer dns.ResponseWriter, op string) *dns.M
 	return message
 }
 
-func debug_request(request dns.Msg, question dns.Question) string {
+func debugRequest(request dns.Msg, question dns.Question) string {
 	s := []string{}
 	s = append(s, fmt.Sprintf("Received request "))
 	s = append(s, fmt.Sprintf("for %s ", question.Name))
 	s = append(s, fmt.Sprintf("opcode: %d ", request.Opcode))
-	s = append(s, fmt.Sprintf("rrtype: %d ", question.Qtype))
+	s = append(s, fmt.Sprintf("RRType: %d ", question.Qtype))
 	s = append(s, fmt.Sprintf("rrclass: %d ", question.Qclass))
 	return strings.Join(s, "")
 }
 
-func handle_axfr(writer dns.ResponseWriter, request *dns.Msg, storage Storage) error {
+func handleAXFR(writer dns.ResponseWriter, request *dns.Msg, storage Storage) error {
 	zonename := request.Question[0].Name
 	log.Debug(fmt.Sprintf("Attempting AXFR for %s", zonename))
 
-	rrs, err := storage.Driver.get_axfr_rrs(zonename)
+	rrs, err := storage.Driver.GetFullAxfrRRs(zonename)
 	if err != nil {
 		return err
 	}
@@ -122,7 +122,7 @@ func handle_axfr(writer dns.ResponseWriter, request *dns.Msg, storage Storage) e
 	ch := make(chan *dns.Envelope)
 	go func(ch chan *dns.Envelope, request *dns.Msg) error {
 		for envelope := range ch {
-			message := prep_reply(request)
+			message := PrepReply(request)
 			message.Answer = append(message.Answer, envelope.RR...)
 			if err := writer.WriteMsg(message); err != nil {
 				log.Error(fmt.Sprintf("Error answering axfr: %s", err))
@@ -132,14 +132,14 @@ func handle_axfr(writer dns.ResponseWriter, request *dns.Msg, storage Storage) e
 		return nil
 	}(ch, request)
 
-	rrs_sent := 0
-	for rrs_sent < len(rrs) {
-		rrs_to_send := 100
-		if rrs_sent+rrs_to_send > len(rrs) {
-			rrs_to_send = len(rrs) - rrs_sent
+	SentRRs := 0
+	for SentRRs < len(rrs) {
+		RRsToSend := 100
+		if SentRRs+RRsToSend > len(rrs) {
+			RRsToSend = len(rrs) - SentRRs
 		}
-		ch <- &dns.Envelope{RR: rrs[rrs_sent:(rrs_sent + rrs_to_send)]}
-		rrs_sent += rrs_to_send
+		ch <- &dns.Envelope{RR: rrs[SentRRs:(SentRRs + RRsToSend)]}
+		SentRRs += RRsToSend
 	}
 	close(ch)
 
@@ -147,21 +147,21 @@ func handle_axfr(writer dns.ResponseWriter, request *dns.Msg, storage Storage) e
 	return nil
 }
 
-func handle_query(question dns.Question, writer dns.ResponseWriter, message *dns.Msg, storage Storage) (*dns.Msg, error) {
+func handleQuery(question dns.Question, message *dns.Msg, storage Storage) (*dns.Msg, error) {
 	name := question.Name
-	rrtypeint := question.Qtype
+	RawRRType := question.Qtype
 
 	// catch a panic here
-	rrtype := dns.TypeToString[rrtypeint]
+	RRType := dns.TypeToString[RawRRType]
 
-	log.Debug(fmt.Sprintf("Attempting %s query for %s", rrtype, name))
-	rrs, err := storage.Driver.get_rrs(name, rrtype)
+	log.Debug(fmt.Sprintf("Attempting %s query for %s", RRType, name))
+	rrs, err := storage.Driver.GetQueryRRs(name, RRType)
 	if err != nil {
-		log.Error(fmt.Sprintf("There was a problem querying %s for %s", rrtype, name))
+		log.Error(fmt.Sprintf("There was a problem querying %s for %s", RRType, name))
 		return message, errors.New("SERVFAIL")
 	}
 
-	log.Info(fmt.Sprintf("Completed %s query for %s", rrtype, name))
+	log.Info(fmt.Sprintf("Completed %s query for %s", RRType, name))
 	if len(rrs) == 0 {
 		return message, errors.New("REFUSED")
 	}

@@ -17,9 +17,10 @@ import (
 type Storage struct {
 	Driver interface {
 		Open() error
-		get_axfr_rrs(string) ([]dns.RR, error)
-		get_rrs_axfr(Zone) ([]dns.RR, error)
-		get_rrs(string, string) ([]dns.RR, error)
+		GetFullAxfrRRs(string) ([]dns.RR, error)
+		getZone(string) (Zone, error)
+		getRawAxfrRRs(Zone) ([]dns.RR, error)
+		GetQueryRRs(string, string) ([]dns.RR, error)
 	}
 }
 
@@ -33,12 +34,13 @@ type Zone struct {
 }
 
 type RR struct {
-	Id     string
-	Rrtype string `db:"type"`
-	Ttl    sql.NullInt64
-	Name   string
-	Data   string
-	Action string
+	Id         string
+	Rrtype     string `db:"type"`
+	Ttl        sql.NullInt64
+	Name       string
+	Data       string
+	Action     string
+	Created_at string
 }
 
 //
@@ -47,7 +49,7 @@ type RR struct {
 
 func (mysql *MySQLDriver) Open() error {
 	var err error
-	mysql.db, err = sqlx.Open(Conf.Db_type, Conf.Db_conn)
+	mysql.db, err = sqlx.Open(Conf.DbType, Conf.DbConn)
 	if err != nil {
 		log.Error(fmt.Sprintf("Problem connecting to Database: %s", err))
 		return err
@@ -63,19 +65,19 @@ func (mysql *MySQLDriver) Open() error {
 	return nil
 }
 
-func (mysql *MySQLDriver) get_axfr_rrs(zonename string) ([]dns.RR, error) {
-	zone, err := mysql.get_zone(zonename)
+func (mysql *MySQLDriver) GetFullAxfrRRs(zonename string) ([]dns.RR, error) {
+	zone, err := mysql.getZone(zonename)
 	if err != nil {
 		return nil, err
 	}
-	rrs, err := mysql.get_rrs_axfr(zone)
+	rrs, err := mysql.getRawAxfrRRs(zone)
 	if err != nil {
 		return nil, err
 	}
 	return rrs, nil
 }
 
-func (mysql *MySQLDriver) get_zone(zonename string) (Zone, error) {
+func (mysql *MySQLDriver) getZone(zonename string) (Zone, error) {
 	zone := Zone{}
 	row := mysql.db.QueryRowx(
 		`SELECT zones.id, zones.ttl
@@ -91,14 +93,14 @@ func (mysql *MySQLDriver) get_zone(zonename string) (Zone, error) {
 	return zone, err
 }
 
-func (mysql *MySQLDriver) get_rrs_axfr(zone Zone) ([]dns.RR, error) {
+func (mysql *MySQLDriver) getRawAxfrRRs(zone Zone) ([]dns.RR, error) {
 	var rrs []RR
-	query := `SELECT recordsets.id, recordsets.type, recordsets.ttl, recordsets.name, records.data, records.action
+	query := `SELECT recordsets.id, recordsets.type, recordsets.ttl, recordsets.name, recordsets.created_at, records.data, records.action
 	       FROM records
 	       INNER JOIN recordsets ON records.recordset_id = recordsets.id
 	       WHERE records.action != 'DELETE'
 	       AND recordsets.zone_id = ?
-	       ORDER BY recordsets.id`
+	       ORDER BY recordsets.created_at`
 
 	rows, err := mysql.db.Queryx(query, zone.Id)
 	if err != nil {
@@ -122,28 +124,28 @@ func (mysql *MySQLDriver) get_rrs_axfr(zone Zone) ([]dns.RR, error) {
 		return nil, err
 	}
 
-	dnsrrs, err := build_dns_rrs(rrs, zone, true)
+	dnsRRs, err := BuildDnsRRs(rrs, zone, true)
 	if err != nil {
 		log.Error("Error creating DNS RRs: ", err)
-		return dnsrrs, err
+		return dnsRRs, err
 	}
-	return dnsrrs, err
+	return dnsRRs, err
 }
 
-func (mysql *MySQLDriver) get_rrs(rrname string, rrtype string) ([]dns.RR, error) {
+func (mysql *MySQLDriver) GetQueryRRs(RRName string, RRType string) ([]dns.RR, error) {
 	var rrs []RR
-	query := []string{`SELECT recordsets.id, recordsets.type, recordsets.ttl, recordsets.name, records.data, records.action
+	query := []string{`SELECT recordsets.id, recordsets.type, recordsets.ttl, recordsets.name, recordsets.created_at, records.data, records.action
 	       FROM records
 	       INNER JOIN recordsets ON records.recordset_id = recordsets.id
 	       WHERE records.action != 'DELETE'
 	       AND recordsets.name = ?`}
 
-	if rrtype != "ANY" {
-		query = append(query, fmt.Sprintf("\n\t\tAND recordsets.type = '%s'", rrtype))
+	if RRType != "ANY" {
+		query = append(query, fmt.Sprintf("\n\t\tAND recordsets.type = '%s'", RRType))
 	}
 
 	queryx := strings.Join(query, "")
-	rows, err := mysql.db.Queryx(queryx, rrname)
+	rows, err := mysql.db.Queryx(queryx, RRName)
 	if err != nil {
 		log.Error("Error querying rrs: ", err)
 		return nil, err
@@ -167,20 +169,20 @@ func (mysql *MySQLDriver) get_rrs(rrname string, rrtype string) ([]dns.RR, error
 
 	// TODO: Go get the actual zone TTL
 	zone := Zone{Id: "notarealzone", Ttl: 3600}
-	dnsrrs, err := build_dns_rrs(rrs, zone, false)
+	DnsRRs, err := BuildDnsRRs(rrs, zone, false)
 	if err != nil {
 		log.Error("Error creating DNS RRs: ", err)
-		return dnsrrs, err
+		return DnsRRs, err
 	}
 
-	return dnsrrs, err
+	return DnsRRs, err
 }
 
-func build_dns_rrs(rrs []RR, zone Zone, axfr bool) ([]dns.RR, error) {
+func BuildDnsRRs(rrs []RR, zone Zone, axfr bool) ([]dns.RR, error) {
 	// This could be suck inside the loop iterating the
 	// DB rows, but this is much nicer. Even if it is a bit slower.
-	var dnsrrs []dns.RR
-	var soarecord dns.RR
+	var DnsRRs []dns.RR
+	var SoaRecord dns.RR
 
 	for _, rr := range rrs {
 		var ttl int64
@@ -191,24 +193,24 @@ func build_dns_rrs(rrs []RR, zone Zone, axfr bool) ([]dns.RR, error) {
 		}
 
 		record := fmt.Sprintf("%s %d IN %s %s", rr.Name, ttl, rr.Rrtype, rr.Data)
-		dnsrr, err := dns.NewRR(record)
+		DnsRR, err := dns.NewRR(record)
 		if err != nil {
 			log.Error(fmt.Sprintf("Error parsing record %s: %s", record, err))
-			return dnsrrs, err
+			return DnsRRs, err
 		}
 
 		log.Debug(fmt.Sprintf("Processed record %s", record))
 		if rr.Rrtype != "SOA" || axfr == false {
-			dnsrrs = append(dnsrrs, dnsrr)
+			DnsRRs = append(DnsRRs, DnsRR)
 		} else {
-			soarecord = dnsrr
+			SoaRecord = DnsRR
 		}
 	}
 
 	// Put the SOA record on first and last
 	if axfr == true {
-		dnsrrs = append(dnsrrs, soarecord)
-		dnsrrs = append([]dns.RR{soarecord}, dnsrrs...)
+		DnsRRs = append(DnsRRs, SoaRecord)
+		DnsRRs = append([]dns.RR{SoaRecord}, DnsRRs...)
 	}
-	return dnsrrs, nil
+	return DnsRRs, nil
 }

@@ -3,8 +3,9 @@ package main
 import (
 	"fmt"
 	log "github.com/Sirupsen/logrus"
-	"github.com/rackerlabs/mdns"
 	"os"
+
+	"github.com/rackerlabs/mdns"
 )
 
 var builddate = ""
@@ -12,7 +13,7 @@ var gitref = ""
 
 func main() {
 	// Init config
-	conf := mdns.Init_config()
+	conf := mdns.InitConfig()
 
 	// Exit if someone just wants to know version
 	if conf.Version == true {
@@ -21,7 +22,7 @@ func main() {
 	}
 
 	// Logging
-	mdns.Init_logging()
+	mdns.InitLogging()
 
 	// Database
 	mysql := &mdns.MySQLDriver{}
@@ -35,7 +36,7 @@ func main() {
 	handler := mdns.NewDefaultMdnsHandler(storage)
 
 	// Listeners
-	go mdns.Serve("tcp", conf.Bind_address, conf.Bind_port, handler)
-	go mdns.Serve("udp", conf.Bind_address, conf.Bind_port, handler)
+	go mdns.Serve("tcp", conf.BindAddress, conf.BindPort, handler)
+	go mdns.Serve("udp", conf.BindAddress, conf.BindPort, handler)
 	mdns.Listen()
 }
