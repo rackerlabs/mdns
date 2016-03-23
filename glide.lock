@@ -1,6 +1,20 @@
-hash: 4f4b5fd56030c7cdee070c722b3d0775dcde50760ea4d71b17dbec9a4e0d417f
-updated: 2016-03-23T13:40:11.885180928Z
+hash: 5f8bb353c358d619fa9097ad2b1ab19487fe2b9b53c1556de0cc3983feded312
+updated: 2016-03-07T10:08:21.494158538-06:00
 imports:
+- name: github.com/go-sql-driver/mysql
+  version: 0f2db9e6c9cff80a97ca5c2c5096242cc1554e16
+- name: github.com/jmoiron/sqlx
+  version: 398dd5876282499cdfd4cb8ea0f31a672abe9495
+  subpackages:
+  - reflectx
 - name: github.com/miekg/dns
   version: 4adf880b0237527fe9e86701c412d6906e5fcf9c
+- name: github.com/Sirupsen/logrus
+  version: 219c8cb75c258c552e999735be6df753ffc7afdc
+- name: github.com/vharitonsky/iniflags
+  version: 743d6901e7ca8ab61ac533a8c49939ac8b560e72
+- name: golang.org/x/sys
+  version: 7a56174f0086b32866ebd746a794417edbc678a1
+  subpackages:
+  - unix
 devImports: []
