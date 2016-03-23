@@ -1,0 +1,3 @@
+package: github.com/rackerlabs/mdns
+import:
+- package: github.com/miekg/dns

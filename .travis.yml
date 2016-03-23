@@ -1,0 +1,16 @@
+language: go
+go:
+  - 1.5
+  - 1.6
+  - tip
+
+services:
+    - docker
+install:
+  - go get github.com/Masterminds/glide
+
+script:
+  - glide install
+  - make build
+  - make test
+
