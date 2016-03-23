@@ -10,10 +10,6 @@ import (
 	"github.com/rackerlabs/mdns"
 )
 
-//{{64796 false 0 false false false false false true false 0} false [{gomdns.com. 252 1}] [] [] [
-//;; OPT PSEUDOSECTION:
-//; EDNS: version 0; flags: ; udp: 4096]}
-
 // A 'fake' dns.ResponseWriter https://github.com/miekg/dns/blob/master/server.go#L24
 // is needed to pass into our DNS Handler function.
 type FakeResponseWriter struct {
