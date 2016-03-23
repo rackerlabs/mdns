@@ -26,7 +26,7 @@ test-docker-kill%:
 test: test-docker-build test-docker-kill1 test-docker-run runtests test-docker-kill2 
 		
 runtests:
-		GO15VENDOREXPERIMENT=1 go test -v -coverprofile cover.out
+		GO15VENDOREXPERIMENT=1 go test -v -coverprofile cover.out -bench=.
 		GO15VENDOREXPERIMENT=1 go tool cover -func=cover.out
 
 run:

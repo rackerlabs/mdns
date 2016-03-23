@@ -2,6 +2,7 @@ package mdns_test
 
 import (
 	"fmt"
+	log "github.com/Sirupsen/logrus"
 	"github.com/miekg/dns"
 	"net"
 	"testing"
@@ -138,3 +139,23 @@ func TestHandleAxfr(t *testing.T) {
 	assert(t, serial == 1458672783,
 		fmt.Sprintf("Wrong serial number, expected 1458672783, got: %d", serial))
 }
+
+func benchmarkAxfr(zonename string, b *testing.B) {
+	SetTestConfig()
+	log.SetLevel(log.ErrorLevel)
+
+	mysql := &mdns.MySQLDriver{}
+	mysql.Open()
+
+	storage := mdns.Storage{Driver: mysql}
+	handler := mdns.NewDefaultMdnsHandler(storage)
+	fakeWriter := &FakeResponseWriter{}
+	// Send a message that mdns won't handle
+	msg := generateMsg(zonename, dns.TypeAXFR, dns.OpcodeQuery)
+	for n := 0; n < b.N; n++ {
+		handler.ServeDNS(fakeWriter, &msg)
+	}
+}
+
+func BenchmarkSmallAxfr(b *testing.B) { benchmarkAxfr("gomdns.com.", b) }
+func BenchmarkLargeAxfr(b *testing.B) { benchmarkAxfr("testbigdomain28580535.com.", b) }

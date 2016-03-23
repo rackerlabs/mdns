@@ -119,32 +119,38 @@ func handleAXFR(writer dns.ResponseWriter, request *dns.Msg, storage Storage) er
 		return err
 	}
 
-	ch := make(chan *dns.Envelope)
-	go func(ch chan *dns.Envelope, request *dns.Msg) error {
-		for envelope := range ch {
-			message := PrepReply(request)
-			message.Answer = append(message.Answer, envelope.RR...)
-			if err := writer.WriteMsg(message); err != nil {
-				log.Error(fmt.Sprintf("Error answering axfr: %s", err))
-				return err
-			}
-		}
-		return nil
-	}(ch, request)
+	err = sendAxfr(writer, request, rrs)
+	if err != nil {
+		return err
+	}
 
+	log.Info(fmt.Sprintf("Completed AXFR for %s", zonename))
+	return nil
+}
+
+func sendAxfr(writer dns.ResponseWriter, request *dns.Msg, rrs []dns.RR) error {
+	envelopes := []dns.Envelope{}
 	SentRRs := 0
 	for SentRRs < len(rrs) {
 		RRsToSend := 100
 		if SentRRs+RRsToSend > len(rrs) {
 			RRsToSend = len(rrs) - SentRRs
 		}
-		ch <- &dns.Envelope{RR: rrs[SentRRs:(SentRRs + RRsToSend)]}
+		envelopes = append(envelopes, dns.Envelope{RR: rrs[SentRRs:(SentRRs + RRsToSend)]})
 		SentRRs += RRsToSend
 	}
-	close(ch)
 
-	log.Info(fmt.Sprintf("Completed AXFR for %s", zonename))
+	for _, envelope := range envelopes {
+		message := PrepReply(request)
+		message.Answer = append(message.Answer, envelope.RR...)
+		if err := writer.WriteMsg(message); err != nil {
+			log.Error(fmt.Sprintf("Error answering axfr: %s", err))
+			return err
+		}
+	}
+
 	return nil
+
 }
 
 func handleQuery(question dns.Question, message *dns.Msg, storage Storage) (*dns.Msg, error) {
