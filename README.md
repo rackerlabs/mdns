@@ -1,9 +1,11 @@
 # mdns
 
+[![Build Status](https://travis-ci.org/rackerlabs/mdns.svg?branch=master)](https://travis-ci.org/rackerlabs/mdns)
+
 Welcome to `designate-mdns`, rewritten in Go.
 
 ```shell
-mdns --help
+$ mdns --help
   -allowUnknownFlags
         Don't terminate the app if ini file contains unknown flags.
   -bind_address string
