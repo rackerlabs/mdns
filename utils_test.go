@@ -13,7 +13,7 @@ func TestInitConfig(t *testing.T) {
 	mdns.InitConfig()
 
 	assert(t, mdns.Conf.Version == false, "Version isn't false")
-	assert(t, mdns.Conf.Debug == true, "Debug isn't true")
+	assert(t, mdns.Conf.Debug == false, "Debug isn't false")
 	assert(t, mdns.Conf.BindAddress == "127.0.0.1", "BindAddress isn't 127.0.0.1")
 	assert(t, mdns.Conf.BindPort == "5354", "BindPort isn't 5354")
 	assert(t, mdns.Conf.DbType == "mysql", "DbType isn't mysql")

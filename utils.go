@@ -29,7 +29,7 @@ type Config struct {
 func InitConfig() Config {
 	// Provide a '--version' flag
 	version := flag.Bool("version", false, "prints version information")
-	debug := flag.Bool("debug", true, "enables debug mode")
+	debug := flag.Bool("debug", false, "enables debug mode")
 	bind_address := flag.String("bind_address", "127.0.0.1", "IP to listen on")
 	bind_port := flag.String("bind_port", "5354", "port to listen on")
 	db_type := flag.String("db_type", "mysql", "type of db connection (mysql, postgres, sqlite3)")
