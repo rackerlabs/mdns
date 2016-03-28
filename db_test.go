@@ -1,6 +1,7 @@
 package mdns_test
 
 import (
+	"database/sql"
 	"fmt"
 	"github.com/miekg/dns"
 	"testing"
@@ -79,4 +80,27 @@ func TestDBSOAQueryBadDB(t *testing.T) {
 
 	_, err := storage.Driver.GetQueryRRs("gomdns.com.", "SOA")
 	assert(t, err != nil, "There should have been an error")
+}
+
+func TestBuildDNSRRsNoSOA(t *testing.T) {
+	SetUp()
+
+	zone := mdns.Zone{Id: "foo.com.", Ttl: 300}
+	rrs := []mdns.RR{
+		mdns.RR{Id: "1", Rrtype: "A", Ttl: sql.NullInt64{Int64: 300, Valid: true}, Name: "bar.foo.com.", Data: "158.85.167.186", Action: "UPDATE", Created_at: "1"},
+	}
+
+	_, err := mdns.BuildDnsRRs(rrs, zone, true)
+	assert(t, err != nil, "There was no error!")
+}
+
+func TestBuildDNSRRsNoRRs(t *testing.T) {
+	SetUp()
+
+	zone := mdns.Zone{Id: "foo.com.", Ttl: 300}
+	rrs := []mdns.RR{}
+
+	dnsRRs, err := mdns.BuildDnsRRs(rrs, zone, true)
+	assert(t, dnsRRs == nil, fmt.Sprintf("DnsRRs wasn't []: %v", dnsRRs))
+	assert(t, err != nil, "There was no error!")
 }
