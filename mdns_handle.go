@@ -129,7 +129,9 @@ func handleAXFR(writer dns.ResponseWriter, request *dns.Msg, storage Storage) er
 }
 
 func sendAxfr(writer dns.ResponseWriter, request *dns.Msg, rrs []dns.RR) error {
+	zonename := request.Question[0].Name
 	envelopes := []dns.Envelope{}
+
 	SentRRs := 0
 	for SentRRs < len(rrs) {
 		RRsToSend := 100
@@ -144,7 +146,7 @@ func sendAxfr(writer dns.ResponseWriter, request *dns.Msg, rrs []dns.RR) error {
 		message := PrepReply(request)
 		message.Answer = append(message.Answer, envelope.RR...)
 		if err := writer.WriteMsg(message); err != nil {
-			log.Error(fmt.Sprintf("Error answering axfr: %s", err))
+			log.Error(fmt.Sprintf("Error answering axfr for %s: %s", zonename, err))
 			return err
 		}
 	}

@@ -2,6 +2,7 @@ package mdns
 
 import (
 	"database/sql"
+	"errors"
 	"fmt"
 	log "github.com/Sirupsen/logrus"
 	_ "github.com/go-sql-driver/mysql"
@@ -87,6 +88,7 @@ func (mysql *MySQLDriver) getZone(zonename string) (Zone, error) {
 	       AND zones.deleted = '0'`, zonename)
 	err := row.StructScan(&zone)
 	if err != nil {
+		log.Error(fmt.Sprintf("Error fetching zone %s: %s", zonename, err))
 		return zone, err
 	}
 
@@ -209,6 +211,9 @@ func BuildDnsRRs(rrs []RR, zone Zone, axfr bool) ([]dns.RR, error) {
 
 	// Put the SOA record on first and last
 	if axfr == true {
+		if SoaRecord == nil {
+			return DnsRRs, errors.New("No SOA record found in AXFR")
+		}
 		DnsRRs = append(DnsRRs, SoaRecord)
 		DnsRRs = append([]dns.RR{SoaRecord}, DnsRRs...)
 	}
