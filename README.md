@@ -51,32 +51,10 @@ what you need to configure + the defaults.
 ## Is it Fast?
 
 Yes. Listening on localhost, with the same Designate database, here are some
-basic benchmarks against the current `designate-mdns`. These were created by
-sending 720 AXFRs/SOA Queries as fast as possible via `dig` in a BASH script:
+basic benchmarks against the current `designate-mdns`. These were created using
+the `bench` tool located in `/cmd`.
 
-```bash
-for i in `seq 1 40`;
-do
-    dig @localhost -p 5354 gomdns.com. -t AXFR +tcp &
-    dig @localhost -p 5354 testdomain44270094.com. -t AXFR +tcp &
-    dig @localhost -p 5354 testdomain84670112.com. -t AXFR +tcp &
-    ...
-done
-
-wait
-```
-
-### AXFR
-
-Keep in mind all of these were very small AXFRs (<10 records), the result
-size makes this almost an equal test to the SOA query test.
-
-`designate-mdns`: 30-60 AXFR/s `3919 ms` avg query time
-`mdns`: ~450 AXFR/s `121 ms` avg query time
-
-### SOA Queries
-
-`designate-mdns`: ~40 SOA queries/s `4996 ms` avg query time
-`mdns`: ~430 SOA queries/s `3.43 ms` avg query time
-
-
+|                | SOA Queries      | 2K Record AXFR |
+|----------------|------------------|----------------|
+| designate-mdns | 40 qps, ~1.2s    | 2.5 qps, ~2.3s |
+| mdns           | 2000 qps, ~.016s | 20 qps, ~.4s   |
